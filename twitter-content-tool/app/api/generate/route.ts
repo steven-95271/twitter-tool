@@ -119,10 +119,17 @@ export async function PUT(request: NextRequest) {
     let extractedText = rawContent;
 
     if (processedAttachments.images.length > 0) {
-      const imageAnalysisResults = await Promise.all(
-        processedAttachments.images.map(img => analyzeImage(img))
-      );
-      extractedText += '\n\n【图片分析】\n' + imageAnalysisResults.join('\n');
+      try {
+        const imageAnalysisResults = await Promise.all(
+          processedAttachments.images.map(img => analyzeImage(img).catch(() => '[图片分析失败]'))
+        );
+        const validResults = imageAnalysisResults.filter(r => r !== '[图片分析失败]');
+        if (validResults.length > 0) {
+          extractedText += '\n\n【图片分析】\n' + validResults.join('\n');
+        }
+      } catch (imageError) {
+        console.error('Image analysis failed:', imageError);
+      }
     }
 
     if (processedAttachments.files.length > 0) {
