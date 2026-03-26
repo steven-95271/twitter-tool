@@ -5,19 +5,17 @@ const client = new OpenAI({
   baseURL: 'https://api.minimaxi.com/v1',
 });
 
-export async function extractInspirationContent(rawContent: string, type: string): Promise<string> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let messages: any[];
-
-  if (type === 'image') {
-    messages = [
+export async function analyzeImage(imageBase64: string): Promise<string> {
+  const response = await client.chat.completions.create({
+    model: 'image-01',
+    messages: [
       {
         role: 'user',
         content: [
           {
             type: 'image_url',
             image_url: {
-              url: rawContent,
+              url: imageBase64,
             },
           },
           {
@@ -26,26 +24,23 @@ export async function extractInspirationContent(rawContent: string, type: string
           },
         ],
       },
-    ];
-  } else if (type === 'link') {
-    messages = [
-      {
-        role: 'user',
-        content: `请访问并分析这个链接的内容，提取出关键信息和观点：${rawContent}`,
-      },
-    ];
-  } else {
-    messages = [
-      {
-        role: 'user',
-        content: `请分析以下内容，提取关键观点和信息要点：\n\n${rawContent}`,
-      },
-    ];
-  }
+    ],
+    temperature: 0.7,
+    max_tokens: 1000,
+  });
 
+  return response.choices[0]?.message?.content || '';
+}
+
+export async function extractTextContent(text: string): Promise<string> {
   const response = await client.chat.completions.create({
     model: 'MiniMax-M2.7',
-    messages,
+    messages: [
+      {
+        role: 'user',
+        content: `请分析以下内容，提取关键观点和信息要点：\n\n${text}`,
+      },
+    ],
     temperature: 0.7,
     max_tokens: 1000,
   });

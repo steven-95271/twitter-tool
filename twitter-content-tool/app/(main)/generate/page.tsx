@@ -12,11 +12,15 @@ interface Persona {
 
 interface Inspiration {
   id: number;
-  type: 'text' | 'image' | 'link';
   raw_content: string;
   extracted_text?: string;
   tags?: string[];
   source?: string;
+  attachments?: {
+    images: string[];
+    links: { url: string; title?: string }[];
+    files: { name: string; type: string; content?: string }[];
+  };
   created_at?: string;
   used_count?: number;
 }

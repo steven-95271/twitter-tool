@@ -4,11 +4,15 @@ import { useState } from 'react';
 
 interface Inspiration {
   id: number;
-  type: 'text' | 'image' | 'link';
   raw_content: string;
   extracted_text?: string;
   tags?: string[];
   source?: string;
+  attachments?: {
+    images: string[];
+    links: { url: string; title?: string }[];
+    files: { name: string; type: string; content?: string }[];
+  };
   created_at?: string;
   used_count?: number;
 }
@@ -32,11 +36,11 @@ export default function InspirationCard({
 }: InspirationCardProps) {
   const [showFull, setShowFull] = useState(false);
 
-  const typeIcon = {
-    text: '📝',
-    image: '🖼️',
-    link: '🔗'
-  };
+  const hasAttachments = inspiration.attachments && (
+    (inspiration.attachments.images && inspiration.attachments.images.length > 0) ||
+    (inspiration.attachments.links && inspiration.attachments.links.length > 0) ||
+    (inspiration.attachments.files && inspiration.attachments.files.length > 0)
+  );
 
   return (
     <div
@@ -51,7 +55,7 @@ export default function InspirationCard({
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2">
-          <span>{typeIcon[inspiration.type]}</span>
+          <span>📝</span>
           <span className="text-sm text-gray-500">
             {new Date(inspiration.created_at || '').toLocaleDateString('zh-CN')}
           </span>
@@ -92,6 +96,26 @@ export default function InspirationCard({
           </p>
         )}
       </div>
+
+      {hasAttachments && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {inspiration.attachments?.images && inspiration.attachments.images.length > 0 && (
+            <span className="px-2 py-0.5 text-xs bg-gray-800 rounded text-gray-400">
+              🖼️ {inspiration.attachments.images.length}
+            </span>
+          )}
+          {inspiration.attachments?.links && inspiration.attachments.links.length > 0 && (
+            <span className="px-2 py-0.5 text-xs bg-gray-800 rounded text-gray-400">
+              🔗 {inspiration.attachments.links.length}
+            </span>
+          )}
+          {inspiration.attachments?.files && inspiration.attachments.files.length > 0 && (
+            <span className="px-2 py-0.5 text-xs bg-gray-800 rounded text-gray-400">
+              📄 {inspiration.attachments.files.length}
+            </span>
+          )}
+        </div>
+      )}
 
       {inspiration.tags && inspiration.tags.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-3">

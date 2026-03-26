@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { personaDb, inspirationDb, Inspiration } from '@/lib/db';
-import { generateTweets, extractInspirationContent, suggestTags } from '@/lib/llm';
+import { personaDb, inspirationDb, Inspiration, InspirationAttachment } from '@/lib/db';
+import { generateTweets, extractTextContent, suggestTags, analyzeImage } from '@/lib/llm';
 import { buildSystemPrompt } from '@/lib/prompt-builder';
+import { fetchLinkContent } from '@/lib/link-fetcher';
+
+const MAX_IMAGE_SIZE = 12 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,7 +29,19 @@ export async function POST(request: NextRequest) {
     const systemPrompt = persona.system_prompt || buildSystemPrompt(persona);
 
     const inspirationTexts = inspirations.map((insp: Inspiration) => {
-      return `【${insp.type}】${insp.extracted_text || insp.raw_content}`;
+      let text = insp.raw_content;
+      if (insp.attachments) {
+        if (insp.attachments.images && insp.attachments.images.length > 0) {
+          text += '\n\n【图片内容】' + (insp.extracted_text || '');
+        }
+        if (insp.attachments.links && insp.attachments.links.length > 0) {
+          text += '\n\n【链接内容】' + insp.attachments.links.map(l => l.title ? `${l.title}: ${l.url}` : l.url).join(', ');
+        }
+        if (insp.attachments.files && insp.attachments.files.length > 0) {
+          text += '\n\n【附件内容】' + insp.attachments.files.map(f => f.content || `[${f.name}]`).join('\n');
+        }
+      }
+      return text;
     }).join('\n\n');
 
     const tweets = await generateTweets(systemPrompt, inspirationTexts, notes);
@@ -45,17 +60,84 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { rawContent, type, source } = body;
+    const { rawContent, source, attachments } = body;
 
-    const extractedText = await extractInspirationContent(rawContent, type);
-    const tags = await suggestTags(extractedText);
+    if (!rawContent || !rawContent.trim()) {
+      return NextResponse.json({ error: '文字内容是必填的' }, { status: 400 });
+    }
+
+    const processedAttachments: InspirationAttachment = {
+      images: [],
+      links: [],
+      files: [],
+    };
+
+    if (attachments) {
+      if (attachments.images && Array.isArray(attachments.images)) {
+        for (const img of attachments.images) {
+          if (img.startsWith('data:image')) {
+            const size = Buffer.from(img.split(',')[1] || '', 'base64').length;
+            if (size > MAX_IMAGE_SIZE) {
+              return NextResponse.json({ error: `图片大小不能超过12MB` }, { status: 400 });
+            }
+            processedAttachments.images.push(img);
+          }
+        }
+      }
+
+      if (attachments.links && Array.isArray(attachments.links)) {
+        for (const link of attachments.links) {
+          if (typeof link === 'string') {
+            const preview = await fetchLinkContent(link);
+            processedAttachments.links.push({
+              url: link,
+              title: preview.title,
+            });
+          } else if (link.url) {
+            const preview = await fetchLinkContent(link.url);
+            processedAttachments.links.push({
+              url: link.url,
+              title: preview.title || link.title,
+            });
+          }
+        }
+      }
+
+      if (attachments.files && Array.isArray(attachments.files)) {
+        for (const file of attachments.files) {
+          if (file.content) {
+            processedAttachments.files.push({
+              name: file.name,
+              type: file.type || 'application/pdf',
+              content: file.content,
+            });
+          }
+        }
+      }
+    }
+
+    let extractedText = rawContent;
+
+    if (processedAttachments.images.length > 0) {
+      const imageAnalysisResults = await Promise.all(
+        processedAttachments.images.map(img => analyzeImage(img))
+      );
+      extractedText += '\n\n【图片分析】\n' + imageAnalysisResults.join('\n');
+    }
+
+    if (processedAttachments.files.length > 0) {
+      extractedText += '\n\n【文档内容】\n' + processedAttachments.files.map(f => f.content).filter(Boolean).join('\n\n');
+    }
+
+    const finalExtractedText = await extractTextContent(extractedText);
+    const tags = await suggestTags(finalExtractedText);
 
     const id = inspirationDb.create({
-      type,
       raw_content: rawContent,
-      extracted_text: extractedText,
+      extracted_text: finalExtractedText,
       tags,
-      source
+      source,
+      attachments: processedAttachments,
     });
 
     const inspiration = inspirationDb.getById(Number(id));

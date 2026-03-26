@@ -17,11 +17,11 @@ const db = new Database(dbPath);
 db.exec(`
   CREATE TABLE IF NOT EXISTS inspirations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT NOT NULL CHECK(type IN ('text', 'image', 'link')),
     raw_content TEXT NOT NULL,
     extracted_text TEXT,
     tags TEXT DEFAULT '[]',
     source TEXT,
+    attachments TEXT DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     used_count INTEGER DEFAULT 0
   );
@@ -41,13 +41,19 @@ db.exec(`
   );
 `);
 
+export interface InspirationAttachment {
+  images: string[];
+  links: { url: string; title?: string }[];
+  files: { name: string; content?: string; type: string }[];
+}
+
 export interface Inspiration {
   id?: number;
-  type: 'text' | 'image' | 'link';
   raw_content: string;
   extracted_text?: string;
   tags?: string[];
   source?: string;
+  attachments?: InspirationAttachment;
   created_at?: string;
   used_count?: number;
 }
@@ -72,6 +78,17 @@ export interface ReferenceAuthor {
   sample_tweets: string[];
 }
 
+interface InspirationRow {
+  id: number;
+  raw_content: string;
+  extracted_text: string | null;
+  tags: string;
+  source: string | null;
+  attachments: string;
+  created_at: string;
+  used_count: number;
+}
+
 interface PersonaRow {
   id: number;
   name: string;
@@ -89,35 +106,37 @@ interface PersonaRow {
 export const inspirationDb = {
   create(inspiration: Omit<Inspiration, 'id' | 'created_at' | 'used_count'>) {
     const stmt = db.prepare(`
-      INSERT INTO inspirations (type, raw_content, extracted_text, tags, source)
+      INSERT INTO inspirations (raw_content, extracted_text, tags, source, attachments)
       VALUES (?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
-      inspiration.type,
       inspiration.raw_content,
       inspiration.extracted_text || null,
       JSON.stringify(inspiration.tags || []),
-      inspiration.source || null
+      inspiration.source || null,
+      JSON.stringify(inspiration.attachments || { images: [], links: [], files: [] })
     );
     return result.lastInsertRowid;
   },
 
   getAll() {
     const stmt = db.prepare('SELECT * FROM inspirations ORDER BY created_at DESC');
-    const rows = stmt.all() as { id: number; type: string; raw_content: string; extracted_text: string | null; tags: string; source: string | null; created_at: string; used_count: number }[];
+    const rows = stmt.all() as InspirationRow[];
     return rows.map(row => ({
       ...row,
-      tags: JSON.parse(row.tags || '[]')
+      tags: JSON.parse(row.tags || '[]'),
+      attachments: JSON.parse(row.attachments || '{"images":[],"links":[],"files":[]}')
     }));
   },
 
   getById(id: number) {
     const stmt = db.prepare('SELECT * FROM inspirations WHERE id = ?');
-    const row = stmt.get(id) as { id: number; type: string; raw_content: string; extracted_text: string | null; tags: string; source: string | null; created_at: string; used_count: number } | undefined;
+    const row = stmt.get(id) as InspirationRow | undefined;
     if (!row) return null;
     return {
       ...row,
-      tags: JSON.parse(row.tags || '[]')
+      tags: JSON.parse(row.tags || '[]'),
+      attachments: JSON.parse(row.attachments || '{"images":[],"links":[],"files":[]}')
     };
   },
 
@@ -125,11 +144,11 @@ export const inspirationDb = {
     const fields: string[] = [];
     const values: (string | number | null)[] = [];
 
-    if (inspiration.type !== undefined) { fields.push('type = ?'); values.push(inspiration.type); }
     if (inspiration.raw_content !== undefined) { fields.push('raw_content = ?'); values.push(inspiration.raw_content); }
     if (inspiration.extracted_text !== undefined) { fields.push('extracted_text = ?'); values.push(inspiration.extracted_text); }
     if (inspiration.tags !== undefined) { fields.push('tags = ?'); values.push(JSON.stringify(inspiration.tags)); }
     if (inspiration.source !== undefined) { fields.push('source = ?'); values.push(inspiration.source); }
+    if (inspiration.attachments !== undefined) { fields.push('attachments = ?'); values.push(JSON.stringify(inspiration.attachments)); }
 
     if (fields.length === 0) return;
 
