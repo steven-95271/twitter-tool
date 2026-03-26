@@ -3,8 +3,41 @@ import { personaDb, inspirationDb, Inspiration, InspirationAttachment } from '@/
 import { generateTweets, extractTextContent, suggestTags, analyzeImage } from '@/lib/llm';
 import { buildSystemPrompt } from '@/lib/prompt-builder';
 import { fetchLinkContent } from '@/lib/link-fetcher';
+import OpenAI from 'openai';
 
 const MAX_IMAGE_SIZE = 12 * 1024 * 1024;
+
+const kimiClient = new OpenAI({
+  apiKey: 'sk-kimi-NIaXNkyMNMdVQU0rpnyHAoC1Qv0VKNwyhcPM401siz8Ad8iLxRAxr4Zyj7g4C60P',
+  baseURL: 'https://api.moonshot.cn/v1',
+});
+
+async function analyzeImageWithKimi(imageBase64: string): Promise<string> {
+  const response = await kimiClient.chat.completions.create({
+    model: 'moonshot-v1-32k',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: imageBase64,
+            },
+          },
+          {
+            type: 'text',
+            text: '请分析这张图片，提取关键信息和观点，用中文回答。',
+          },
+        ],
+      },
+    ],
+    temperature: 0.7,
+    max_tokens: 1000,
+  });
+
+  return response.choices[0]?.message?.content || '';
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -87,18 +120,25 @@ export async function PUT(request: NextRequest) {
 
       if (attachments.links && Array.isArray(attachments.links)) {
         for (const link of attachments.links) {
-          if (typeof link === 'string') {
-            const preview = await fetchLinkContent(link);
+          const url = typeof link === 'string' ? link : link.url;
+          if (!url) continue;
+          
+          try {
+            const preview = await fetchLinkContent(url);
+            if (!preview.title && !preview.description) {
+              return NextResponse.json({ 
+                error: `链接无法访问或内容为空: ${url}` 
+              }, { status: 400 });
+            }
             processedAttachments.links.push({
-              url: link,
+              url,
               title: preview.title,
             });
-          } else if (link.url) {
-            const preview = await fetchLinkContent(link.url);
-            processedAttachments.links.push({
-              url: link.url,
-              title: preview.title || link.title,
-            });
+          } catch (linkError: any) {
+            console.error('Link fetch failed:', linkError);
+            return NextResponse.json({ 
+              error: `链接抓取失败: ${url} - ${linkError?.message || '未知错误'}` 
+            }, { status: 500 });
           }
         }
       }
@@ -119,16 +159,22 @@ export async function PUT(request: NextRequest) {
     let extractedText = rawContent;
 
     if (processedAttachments.images.length > 0) {
-      try {
-        const imageAnalysisResults = await Promise.all(
-          processedAttachments.images.map(img => analyzeImage(img).catch(() => '[图片分析失败]'))
-        );
-        const validResults = imageAnalysisResults.filter(r => r !== '[图片分析失败]');
-        if (validResults.length > 0) {
-          extractedText += '\n\n【图片分析】\n' + validResults.join('\n');
+      const imageAnalysisResults: string[] = [];
+      for (const img of processedAttachments.images) {
+        try {
+          let result = await analyzeImage(img).catch(async () => {
+            return await analyzeImageWithKimi(img);
+          });
+          imageAnalysisResults.push(result);
+        } catch (imageError: any) {
+          console.error('Image analysis failed:', imageError);
+          return NextResponse.json({ 
+            error: `图片分析失败: ${imageError?.message || '未知错误'}` 
+          }, { status: 500 });
         }
-      } catch (imageError) {
-        console.error('Image analysis failed:', imageError);
+      }
+      if (imageAnalysisResults.length > 0) {
+        extractedText += '\n\n【图片分析】\n' + imageAnalysisResults.join('\n');
       }
     }
 
