@@ -4,6 +4,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
+ARG MINIMAX_API_KEY
+ENV MINIMAX_API_KEY=${MINIMAX_API_KEY}
 RUN npm run build
 
 FROM node:20-alpine AS runner
